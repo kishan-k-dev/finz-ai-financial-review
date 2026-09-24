@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+finz.db
+data/*
+!data/.gitkeep
+test.csv

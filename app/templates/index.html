@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Finz — AI Financial Review</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header><h1>Finz Financial Review</h1><p>AI-native transaction review • deterministic financial calculations</p></header>
+<main>
+<section class="card">
+<h2>1. Import transactions</h2>
+<input id="file" type="file" accept=".csv,.xlsx">
+<button onclick="upload()">Upload</button>
+<span id="status"></span>
+</section>
+<section class="grid">
+<div class="card"><h2>Monthly P&L</h2><div id="pnl"></div></div>
+<div class="card"><h2>Material variance</h2><div id="variance"></div></div>
+</section>
+<section class="card">
+<h2>2. Transactions & review</h2>
+<div id="tx"></div>
+</section>
+<section class="card">
+<h2>3. AI Financial Analyst</h2>
+<div class="chips">
+<button onclick="ask('What was our revenue?')">Revenue</button>
+<button onclick="ask('How much did we spend on payroll?')">Payroll</button>
+<button onclick="ask('Why did operating profit change?')">Profit variance</button>
+</div>
+<div class="chat"><input id="q" placeholder="Ask a financial question..."><button onclick="ask()">Ask</button></div>
+<pre id="answer"></pre>
+</section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
