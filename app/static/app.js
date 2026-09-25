@@ -3,33 +3,26 @@
 // ============================================================
 
 async function upload() {
-    const f = document.getElementById('file').files[0];
+    const f = document.getElementById("file").files[0];
 
     if (!f) {
-        alert('Choose the dataset first');
+        alert("Choose the dataset first");
         return;
     }
 
-    const status = document.getElementById('status');
-
-    status.textContent = 'Uploading...';
+    const status = document.getElementById("status");
+    status.textContent = "Uploading...";
 
     try {
-        // Convert selected file to Base64
         const base64 = await new Promise((resolve, reject) => {
             const reader = new FileReader();
 
             reader.onload = () => {
                 try {
-                    const result = reader.result;
-
-                    // result looks like:
-                    // data:application/...;base64,AAAA....
-
-                    const parts = result.split(',');
+                    const parts = reader.result.split(",");
 
                     if (parts.length < 2) {
-                        reject(new Error('Could not read the file.'));
+                        reject(new Error("Could not read the file."));
                         return;
                     }
 
@@ -40,17 +33,17 @@ async function upload() {
             };
 
             reader.onerror = () => {
-                reject(new Error('Failed to read the selected file.'));
+                reject(new Error("Failed to read the selected file."));
             };
 
             reader.readAsDataURL(f);
         });
 
-        // Send file as JSON
-        const r = await fetch('/api/upload-json', {
-            method: 'POST',
+        const r = await fetch("/api/upload-json", {
+            method: "POST",
+            credentials: "same-origin",
             headers: {
-                'Content-Type': 'application/json'
+                "Content-Type": "application/json"
             },
             body: JSON.stringify({
                 filename: f.name,
@@ -58,7 +51,6 @@ async function upload() {
             })
         });
 
-        // Read response safely
         const text = await r.text();
 
         let d = null;
@@ -69,33 +61,30 @@ async function upload() {
             } catch (error) {
                 status.textContent =
                     `Upload failed: HTTP ${r.status} ${r.statusText}`;
-                console.error('Invalid JSON response:', text);
+                console.error("Invalid JSON response:", text);
                 return;
             }
         }
 
-        // HTTP error
         if (!r.ok) {
             status.textContent =
                 `Upload failed: ${d?.detail || `HTTP ${r.status}`}`;
             return;
         }
 
-        // Successful upload
         if (d && d.ok) {
             status.textContent =
                 `Loaded ${d.rows} transactions`;
 
             await refresh();
-
             return;
         }
 
         status.textContent =
-            'Upload failed: Unexpected server response.';
+            "Upload failed: Unexpected server response.";
 
     } catch (error) {
-        console.error('Upload error:', error);
+        console.error("Upload error:", error);
 
         status.textContent =
             `Upload failed: ${error.message}`;
@@ -115,37 +104,17 @@ async function refresh() {
     ]);
 }
 
-// ============================================================
-// INITIAL LOAD
-// ============================================================
 
-window.addEventListener("load", async () => {
-    try {
-        // Clear any previously stored shared transaction data
-        const resetResponse = await fetch("/api/reset", {
-            method: "POST",
-            cache: "no-store"
-        });
-
-        if (!resetResponse.ok) {
-            console.error("Failed to reset previous data");
-        }
-
-        // Only load dashboard AFTER reset is complete
-        await refresh();
-
-    } catch (error) {
-        console.error("Initial load error:", error);
-        await refresh();
-    }
-});
 // ============================================================
 // MONTHLY P&L
 // ============================================================
 
 async function loadPnl() {
     try {
-        const r = await fetch('/api/pnl');
+        const r = await fetch("/api/pnl", {
+            credentials: "same-origin",
+            cache: "no-store"
+        });
 
         if (!r.ok) {
             throw new Error(`HTTP ${r.status}`);
@@ -153,7 +122,7 @@ async function loadPnl() {
 
         const d = await r.json();
 
-        document.getElementById('pnl').innerHTML =
+        document.getElementById("pnl").innerHTML =
             d.length
                 ? `
                     <table class="table">
@@ -166,39 +135,30 @@ async function loadPnl() {
                             <th>Opex</th>
                             <th>Operating Profit</th>
                         </tr>
-                `
 
-                +
+                        ${d.map(x => `
+                            <tr>
+                                <td>${x.month}</td>
+                                <td>${fmt(x.revenue)}</td>
+                                <td>${fmt(x.cogs)}</td>
+                                <td>${fmt(x.gross_profit)}</td>
+                                <td>${fmt(x.payroll)}</td>
+                                <td>${fmt(x.operating_expenses)}</td>
+                                <td>
+                                    <b>${fmt(x.operating_profit)}</b>
+                                </td>
+                            </tr>
+                        `).join("")}
 
-                d.map(x =>
-                    `
-                        <tr>
-                            <td>${x.month}</td>
-                            <td>${fmt(x.revenue)}</td>
-                            <td>${fmt(x.cogs)}</td>
-                            <td>${fmt(x.gross_profit)}</td>
-                            <td>${fmt(x.payroll)}</td>
-                            <td>${fmt(x.operating_expenses)}</td>
-                            <td>
-                                <b>${fmt(x.operating_profit)}</b>
-                            </td>
-                        </tr>
-                    `
-                ).join('')
-
-                +
-
-                `
                     </table>
                 `
-
-                : 'Upload data first.';
+                : "Upload data first.";
 
     } catch (error) {
-        console.error('P&L error:', error);
+        console.error("P&L error:", error);
 
-        document.getElementById('pnl').textContent =
-            'Unable to load P&L.';
+        document.getElementById("pnl").textContent =
+            "Unable to load P&L.";
     }
 }
 
@@ -209,7 +169,10 @@ async function loadPnl() {
 
 async function loadVariance() {
     try {
-        const r = await fetch('/api/variance');
+        const r = await fetch("/api/variance", {
+            credentials: "same-origin",
+            cache: "no-store"
+        });
 
         if (!r.ok) {
             throw new Error(`HTTP ${r.status}`);
@@ -217,46 +180,46 @@ async function loadVariance() {
 
         const d = await r.json();
 
-        document.getElementById('variance').innerHTML =
+        document.getElementById("variance").innerHTML =
             d.length
-                ? d.map(x =>
-                    `
-                        <div class="row">
-                            <b>
-                                ${x.from_month} → ${x.to_month}
-                            </b>
-                            <br>
+                ? d.map(x => `
+                    <div class="row">
 
-                            Profit change:
-                            ${fmt(x.profit_change)}
+                        <b>
+                            ${x.from_month} → ${x.to_month}
+                        </b>
 
-                            <br>
+                        <br>
 
-                            Revenue:
-                            ${fmt(x.revenue_change)}
-                            |
+                        Profit change:
+                        ${fmt(x.profit_change)}
 
-                            COGS:
-                            ${fmt(x.cogs_change)}
-                            |
+                        <br>
 
-                            Payroll:
-                            ${fmt(x.payroll_change)}
-                            |
+                        Revenue:
+                        ${fmt(x.revenue_change)}
+                        |
 
-                            Opex:
-                            ${fmt(x.opex_change)}
-                        </div>
-                    `
-                ).join('')
+                        COGS:
+                        ${fmt(x.cogs_change)}
+                        |
 
-                : 'Upload at least two months.';
+                        Payroll:
+                        ${fmt(x.payroll_change)}
+                        |
+
+                        Opex:
+                        ${fmt(x.opex_change)}
+
+                    </div>
+                `).join("")
+                : "Upload at least two months.";
 
     } catch (error) {
-        console.error('Variance error:', error);
+        console.error("Variance error:", error);
 
-        document.getElementById('variance').textContent =
-            'Unable to load variance.';
+        document.getElementById("variance").textContent =
+            "Unable to load variance.";
     }
 }
 
@@ -267,7 +230,10 @@ async function loadVariance() {
 
 async function loadTx() {
     try {
-        const r = await fetch('/api/transactions');
+        const r = await fetch("/api/transactions", {
+            credentials: "same-origin",
+            cache: "no-store"
+        });
 
         if (!r.ok) {
             throw new Error(`HTTP ${r.status}`);
@@ -275,10 +241,11 @@ async function loadTx() {
 
         const d = await r.json();
 
-        document.getElementById('tx').innerHTML =
+        document.getElementById("tx").innerHTML =
             d.length
                 ? `
                     <table class="table">
+
                         <tr>
                             <th>Date</th>
                             <th>Description</th>
@@ -286,86 +253,73 @@ async function loadTx() {
                             <th>Category</th>
                             <th>Review</th>
                         </tr>
-                `
 
-                +
+                        ${d.slice(0, 200).map(x => `
+                            <tr class="${x.is_review ? "review" : ""}">
 
-                d.slice(0, 200).map(x =>
-                    `
-                        <tr class="${x.is_review ? 'review' : ''}">
+                                <td>
+                                    ${x.tx_date}
+                                </td>
 
-                            <td>
-                                ${x.tx_date}
-                            </td>
+                                <td>
+                                    ${esc(x.description)}
+                                </td>
 
-                            <td>
-                                ${esc(x.description)}
-                            </td>
+                                <td>
+                                    ${fmt(x.amount)}
+                                </td>
 
-                            <td>
-                                ${fmt(x.amount)}
-                            </td>
+                                <td>
 
-                            <td>
+                                    <select
+                                        onchange="cat(${x.id}, this.value)"
+                                    >
 
-                                <select
-                                    onchange="cat(${x.id}, this.value)"
-                                >
-
-                                    ${
-                                        [
-                                            'Revenue',
-                                            'Cost of Goods Sold',
-                                            'Payroll',
-                                            'Operating Expenses'
-                                        ]
-
-                                        .map(c =>
-                                            `
+                                        ${
+                                            [
+                                                "Revenue",
+                                                "Cost of Goods Sold",
+                                                "Payroll",
+                                                "Operating Expenses"
+                                            ]
+                                            .map(c => `
                                                 <option
                                                     ${
                                                         c === x.category
-                                                            ? 'selected'
-                                                            : ''
+                                                            ? "selected"
+                                                            : ""
                                                     }
                                                 >
                                                     ${c}
                                                 </option>
-                                            `
-                                        )
+                                            `)
+                                            .join("")
+                                        }
 
-                                        .join('')
+                                    </select>
+
+                                </td>
+
+                                <td>
+                                    ${
+                                        x.is_review
+                                            ? "⚠️ Review"
+                                            : ""
                                     }
+                                </td>
 
-                                </select>
+                            </tr>
+                        `).join("")}
 
-                            </td>
-
-                            <td>
-                                ${
-                                    x.is_review
-                                        ? '⚠️ Review'
-                                        : ''
-                                }
-                            </td>
-
-                        </tr>
-                    `
-                ).join('')
-
-                +
-
-                `
                     </table>
                 `
-
-                : 'Upload data first.';
+                : "Upload data first.";
 
     } catch (error) {
-        console.error('Transaction error:', error);
+        console.error("Transaction error:", error);
 
-        document.getElementById('tx').textContent =
-            'Unable to load transactions.';
+        document.getElementById("tx").textContent =
+            "Unable to load transactions.";
     }
 }
 
@@ -376,13 +330,16 @@ async function loadTx() {
 
 async function cat(id, category) {
     try {
+
         const r = await fetch(
             `/api/transactions/${id}/category`,
             {
-                method: 'POST',
+                method: "POST",
+
+                credentials: "same-origin",
 
                 headers: {
-                    'Content-Type': 'application/json'
+                    "Content-Type": "application/json"
                 },
 
                 body: JSON.stringify({
@@ -395,7 +352,7 @@ async function cat(id, category) {
 
         if (!r.ok) {
             console.error(
-                'Category update failed:',
+                "Category update failed:",
                 text
             );
 
@@ -405,8 +362,9 @@ async function cat(id, category) {
         await refresh();
 
     } catch (error) {
+
         console.error(
-            'Category update error:',
+            "Category update error:",
             error
         );
     }
@@ -418,28 +376,32 @@ async function cat(id, category) {
 // ============================================================
 
 async function ask(q) {
+
     const question =
         q ||
-        document.getElementById('q').value;
+        document.getElementById("q").value;
 
     if (!question) {
         return;
     }
 
     const answerBox =
-        document.getElementById('answer');
+        document.getElementById("answer");
 
     answerBox.textContent =
-        'Analyzing...';
+        "Analyzing...";
 
     try {
+
         const r = await fetch(
-            '/api/chat',
+            "/api/chat",
             {
-                method: 'POST',
+                method: "POST",
+
+                credentials: "same-origin",
 
                 headers: {
-                    'Content-Type': 'application/json'
+                    "Content-Type": "application/json"
                 },
 
                 body: JSON.stringify({
@@ -453,16 +415,22 @@ async function ask(q) {
         let d = null;
 
         if (text) {
+
             try {
+
                 d = JSON.parse(text);
+
             } catch (error) {
+
                 answerBox.textContent =
                     `AI request failed: HTTP ${r.status}`;
+
                 return;
             }
         }
 
         if (!r.ok) {
+
             answerBox.textContent =
                 d?.detail ||
                 `AI request failed: HTTP ${r.status}`;
@@ -471,18 +439,20 @@ async function ask(q) {
         }
 
         if (!d) {
+
             answerBox.textContent =
-                'AI returned an empty response.';
+                "AI returned an empty response.";
 
             return;
         }
 
         answerBox.textContent =
-            `${d.answer || ''}\n\nEvidence: ${d.evidence || ''}`;
+            `${d.answer || ""}\n\nEvidence: ${d.evidence || ""}`;
 
     } catch (error) {
+
         console.error(
-            'AI request error:',
+            "AI request error:",
             error
         );
 
@@ -497,6 +467,7 @@ async function ask(q) {
 // ============================================================
 
 function fmt(x) {
+
     return Number(x || 0).toLocaleString(
         undefined,
         {
@@ -511,15 +482,16 @@ function fmt(x) {
 // ============================================================
 
 function esc(s) {
+
     return String(s).replace(
         /[&<>"']/g,
 
         m => ({
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#39;'
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;"
         }[m])
     );
 }
@@ -529,4 +501,11 @@ function esc(s) {
 // INITIAL LOAD
 // ============================================================
 
-refresh();
+window.addEventListener("load", async () => {
+
+    // DO NOT reset the database here.
+    // Backend now separates data using finz_session cookie.
+
+    await refresh();
+
+});
