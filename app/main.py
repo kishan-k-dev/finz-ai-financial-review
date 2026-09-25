@@ -2,18 +2,17 @@ import os
 import sqlite3
 import json
 import base64
+import uuid
 from pathlib import Path
 from io import BytesIO
 
 import pandas as pd
 from dotenv import load_dotenv
 from pydantic import BaseModel
-
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-
 
 # ============================================================
 # CONFIGURATION
@@ -24,14 +23,7 @@ load_dotenv()
 BASE = Path(__file__).resolve().parent.parent
 DB = BASE / "finz.db"
 
-
-# ============================================================
-# FASTAPI APP
-# ============================================================
-
-app = FastAPI(
-    title="Finz AI Financial Review MVP"
-)
+app = FastAPI(title="Finz AI Financial Review MVP")
 
 app.mount(
     "/static",
@@ -39,13 +31,11 @@ app.mount(
     name="static"
 )
 
-templates = Jinja2Templates(
-    directory=BASE / "app" / "templates"
-)
+templates = Jinja2Templates(directory=BASE / "app" / "templates")
 
 
 # ============================================================
-# DATABASE
+# DATABASE + SESSION ISOLATION
 # ============================================================
 
 def conn():
@@ -57,10 +47,10 @@ def conn():
 def init_db():
     c = conn()
 
-    c.execute(
-        """
+    c.execute("""
         CREATE TABLE IF NOT EXISTS transactions(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
             tx_date TEXT,
             description TEXT,
             amount REAL,
@@ -68,8 +58,15 @@ def init_db():
             confidence REAL,
             is_review INTEGER DEFAULT 0
         )
-        """
-    )
+    """)
+
+    # Safely upgrade an older finz.db that was created without session_id.
+    columns = [row["name"] for row in c.execute(
+        "PRAGMA table_info(transactions)"
+    ).fetchall()]
+
+    if "session_id" not in columns:
+        c.execute("ALTER TABLE transactions ADD COLUMN session_id TEXT")
 
     c.commit()
     c.close()
@@ -78,14 +75,32 @@ def init_db():
 init_db()
 
 
+def get_session_id(request: Request):
+    """Return the browser's session cookie."""
+    return request.cookies.get("finz_session")
+
+
+def ensure_session(response, request):
+    """Create a browser session cookie if this is a new visitor."""
+    session_id = get_session_id(request)
+
+    if not session_id:
+        session_id = uuid.uuid4().hex
+        response.set_cookie(
+            key="finz_session",
+            value=session_id,
+            httponly=True,
+            samesite="lax",
+            secure=True,
+            max_age=60 * 60 * 24 * 30,
+        )
+
+    return session_id
+
+
 # ============================================================
 # CATEGORY RULES
 # ============================================================
-
-# IMPORTANT:
-# More specific rules come before generic rules.
-# This prevents things like "POS/software subscription"
-# from being incorrectly classified as Revenue.
 
 REVENUE_WORDS = [
     "pos batch deposit",
@@ -163,48 +178,19 @@ OPEX_WORDS = [
 
 
 def guess_category(desc, amount):
-    """
-    Deterministically classify a transaction.
-
-    Positive amounts are generally income.
-    Negative amounts are generally expenses.
-
-    Specific description rules are checked first.
-    """
-
     s = str(desc).lower().strip()
-
-    # --------------------------------------------------------
-    # REVENUE
-    # --------------------------------------------------------
 
     if any(word in s for word in REVENUE_WORDS):
         return "Revenue", 0.95
 
-    # --------------------------------------------------------
-    # COGS
-    # --------------------------------------------------------
-
     if any(word in s for word in COGS_WORDS):
         return "Cost of Goods Sold", 0.95
-
-    # --------------------------------------------------------
-    # PAYROLL
-    # --------------------------------------------------------
 
     if any(word in s for word in PAYROLL_WORDS):
         return "Payroll", 0.95
 
-    # --------------------------------------------------------
-    # OPERATING EXPENSES
-    # --------------------------------------------------------
-
     if any(word in s for word in OPEX_WORDS):
         return "Operating Expenses", 0.95
-
-    # --------------------------------------------------------
-    # FALLBACK
-    # --------------------------------------------------------
 
     if amount > 0:
         return "Revenue", 0.70
@@ -217,20 +203,8 @@ def guess_category(desc, amount):
 # ============================================================
 
 def normalize(df):
-    """
-    Convert different CSV/XLSX column formats into:
-
-    tx_date
-    description
-    amount
-    category
-    confidence
-    is_review
-    """
-
     df = df.copy()
 
-    # Normalize column names
     df.columns = [
         str(c).strip().lower().replace(" ", "_")
         for c in df.columns
@@ -239,12 +213,10 @@ def normalize(df):
     cols = set(df.columns)
 
     def pick(candidates):
-        # Exact match
         for x in candidates:
             if x in cols:
                 return x
 
-        # Partial match
         for c in df.columns:
             if any(x in c for x in candidates):
                 return c
@@ -252,38 +224,24 @@ def normalize(df):
         return None
 
     date_col = pick([
-        "date",
-        "transaction_date",
-        "trans_date",
-        "posted_date"
+        "date", "transaction_date", "trans_date", "posted_date"
     ])
 
     desc_col = pick([
-        "description",
-        "details",
-        "memo",
-        "merchant",
-        "transaction_description",
-        "name"
+        "description", "details", "memo", "merchant",
+        "transaction_description", "name"
     ])
 
     amt_col = pick([
-        "amount",
-        "transaction_amount",
-        "value",
-        "total"
+        "amount", "transaction_amount", "value", "total"
     ])
 
     debit_col = pick([
-        "debit",
-        "withdrawal",
-        "outflow"
+        "debit", "withdrawal", "outflow"
     ])
 
     credit_col = pick([
-        "credit",
-        "deposit",
-        "inflow"
+        "credit", "deposit", "inflow"
     ])
 
     if not date_col or not desc_col:
@@ -300,22 +258,18 @@ def normalize(df):
 
     out = pd.DataFrame()
 
-    # Date
     out["tx_date"] = pd.to_datetime(
         df[date_col],
         errors="coerce"
     )
 
-    # Description
     out["description"] = (
         df[desc_col]
         .fillna("")
         .astype(str)
     )
 
-    # Amount
     if amt_col:
-
         out["amount"] = pd.to_numeric(
             df[amt_col]
             .astype(str)
@@ -324,33 +278,27 @@ def normalize(df):
             .str.strip(),
             errors="coerce"
         )
-
     else:
-
         if debit_col:
             debit = pd.to_numeric(
-                df[debit_col],
-                errors="coerce"
+                df[debit_col], errors="coerce"
             ).fillna(0)
         else:
             debit = 0
 
         if credit_col:
             credit = pd.to_numeric(
-                df[credit_col],
-                errors="coerce"
+                df[credit_col], errors="coerce"
             ).fillna(0)
         else:
             credit = 0
 
         out["amount"] = credit - debit
 
-    # Remove invalid rows
     out = out.dropna(
         subset=["tx_date", "amount"]
     ).reset_index(drop=True)
 
-    # Categorization
     cats = out.apply(
         lambda r: guess_category(
             r["description"],
@@ -359,17 +307,8 @@ def normalize(df):
         axis=1
     )
 
-    out["category"] = [
-        x[0]
-        for x in cats
-    ]
-
-    out["confidence"] = [
-        x[1]
-        for x in cats
-    ]
-
-    # Low confidence transactions require review
+    out["category"] = [x[0] for x in cats]
+    out["confidence"] = [x[1] for x in cats]
     out["is_review"] = (
         out["confidence"] < 0.60
     ).astype(int)
@@ -383,21 +322,77 @@ def normalize(df):
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
+    response = templates.TemplateResponse(
+        "index.html",
+        {"request": request}
+    )
+    ensure_session(response, request)
+    return response
 
-    # Start every new page visit with a fresh dataset.
-    # This prevents previously uploaded financial data from
-    # remaining visible to the next visitor.
+
+# ============================================================
+# FILE READER
+# ============================================================
+
+def dataframe_from_bytes(raw, filename):
+    filename = (filename or "").lower()
+
+    if filename.endswith(".xlsx"):
+        return pd.read_excel(
+            BytesIO(raw),
+            engine="openpyxl"
+        )
+
+    if filename.endswith(".csv"):
+        return pd.read_csv(BytesIO(raw))
+
+    raise HTTPException(
+        status_code=400,
+        detail="Please upload a .xlsx or .csv file."
+    )
+
+
+def store_dataframe(df, session_id):
+    norm = normalize(df)
     c = conn()
-    c.execute("DELETE FROM transactions")
+
+    # Clear ONLY this browser session's data.
+    c.execute(
+        "DELETE FROM transactions WHERE session_id=?",
+        (session_id,)
+    )
+
+    c.executemany(
+        """
+        INSERT INTO transactions(
+            session_id,
+            tx_date,
+            description,
+            amount,
+            category,
+            confidence,
+            is_review
+        )
+        VALUES(?,?,?,?,?,?,?)
+        """,
+        [
+            (
+                session_id,
+                r.tx_date.strftime("%Y-%m-%d"),
+                r.description,
+                float(r.amount),
+                r.category,
+                float(r.confidence),
+                int(r.is_review)
+            )
+            for r in norm.itertuples()
+        ]
+    )
+
     c.commit()
     c.close()
 
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request
-        }
-    )
+    return norm
 
 
 # ============================================================
@@ -405,14 +400,17 @@ def home(request: Request):
 # ============================================================
 
 @app.post("/api/upload")
-async def upload(file: UploadFile = File(...)):
+async def upload(request: Request, file: UploadFile = File(...)):
+    session_id = get_session_id(request)
+
+    if not session_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Session not initialized. Refresh the page."
+        )
 
     try:
-
-        filename = (
-            file.filename or ""
-        ).lower()
-
+        filename = (file.filename or "").lower()
         raw = await file.read()
 
         if not raw:
@@ -421,90 +419,28 @@ async def upload(file: UploadFile = File(...)):
                 detail="Uploaded file is empty."
             )
 
-        if filename.endswith(".xlsx"):
-
-            df = pd.read_excel(
-                BytesIO(raw),
-                engine="openpyxl"
-            )
-
-        elif filename.endswith(".csv"):
-
-            df = pd.read_csv(
-                BytesIO(raw)
-            )
-
-        else:
-
-            raise HTTPException(
-                status_code=400,
-                detail="Please upload a .xlsx or .csv file."
-            )
-
-        norm = normalize(df)
-
-        c = conn()
-
-        c.execute(
-            "DELETE FROM transactions"
-        )
-
-        c.executemany(
-            """
-            INSERT INTO transactions(
-                tx_date,
-                description,
-                amount,
-                category,
-                confidence,
-                is_review
-            )
-            VALUES(?,?,?,?,?,?)
-            """,
-            [
-                (
-                    r.tx_date.strftime("%Y-%m-%d"),
-                    r.description,
-                    float(r.amount),
-                    r.category,
-                    float(r.confidence),
-                    int(r.is_review)
-                )
-                for r in norm.itertuples()
-            ]
-        )
-
-        c.commit()
-        c.close()
+        df = dataframe_from_bytes(raw, filename)
+        norm = store_dataframe(df, session_id)
 
         print(
-            f"UPLOAD: successfully stored {len(norm)} transactions"
+            f"UPLOAD: session={session_id[:8]} "
+            f"stored {len(norm)} transactions"
         )
 
         return {
             "ok": True,
             "rows": len(norm),
-            "columns": [
-                str(col)
-                for col in df.columns
-            ]
+            "columns": [str(col) for col in df.columns]
         }
 
     except HTTPException:
         raise
 
     except Exception as e:
-
-        print(
-            f"UPLOAD ERROR: {type(e).__name__}: {e}"
-        )
-
+        print(f"UPLOAD ERROR: {type(e).__name__}: {e}")
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Upload failed: "
-                f"{type(e).__name__}: {e}"
-            )
+            detail=f"Upload failed: {type(e).__name__}: {e}"
         )
 
 
@@ -523,125 +459,66 @@ def health():
 
 
 @app.post("/api/upload-json")
-async def upload_json(payload: FileUploadRequest):
+async def upload_json(
+    request: Request,
+    payload: FileUploadRequest
+):
+    session_id = get_session_id(request)
+
+    if not session_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Session not initialized. Refresh the page."
+        )
 
     try:
-
         if not payload.data:
-
             raise HTTPException(
                 status_code=400,
                 detail="Uploaded file is empty."
             )
 
-        # Decode Base64
         try:
-
             raw = base64.b64decode(
                 payload.data,
                 validate=True
             )
-
         except Exception:
-
             raise HTTPException(
                 status_code=400,
                 detail="Invalid Base64 file data."
             )
 
         if not raw:
-
             raise HTTPException(
                 status_code=400,
                 detail="Uploaded file is empty."
             )
 
-        filename = (
-            payload.filename or ""
-        ).lower()
-
-        # Read Excel
-        if filename.endswith(".xlsx"):
-
-            df = pd.read_excel(
-                BytesIO(raw),
-                engine="openpyxl"
-            )
-
-        # Read CSV
-        elif filename.endswith(".csv"):
-
-            df = pd.read_csv(
-                BytesIO(raw)
-            )
-
-        else:
-
-            raise HTTPException(
-                status_code=400,
-                detail="Please upload a .xlsx or .csv file."
-            )
-
-        # Normalize
-        norm = normalize(df)
-
-        # Store transactions
-        c = conn()
-
-        c.execute(
-            "DELETE FROM transactions"
+        df = dataframe_from_bytes(
+            raw,
+            payload.filename
         )
 
-        c.executemany(
-            """
-            INSERT INTO transactions(
-                tx_date,
-                description,
-                amount,
-                category,
-                confidence,
-                is_review
-            )
-            VALUES(?,?,?,?,?,?)
-            """,
-            [
-                (
-                    r.tx_date.strftime("%Y-%m-%d"),
-                    r.description,
-                    float(r.amount),
-                    r.category,
-                    float(r.confidence),
-                    int(r.is_review)
-                )
-                for r in norm.itertuples()
-            ]
-        )
-
-        c.commit()
-        c.close()
+        norm = store_dataframe(df, session_id)
 
         print(
-            f"JSON UPLOAD: successfully stored "
-            f"{len(norm)} transactions"
+            f"JSON UPLOAD: session={session_id[:8]} "
+            f"stored {len(norm)} transactions"
         )
 
         return {
             "ok": True,
             "rows": len(norm),
-            "columns": [
-                str(col)
-                for col in df.columns
-            ]
+            "columns": [str(col) for col in df.columns]
         }
 
     except HTTPException:
         raise
 
     except Exception as e:
-
         print(
-            f"JSON UPLOAD ERROR: "
-            f"{type(e).__name__}: {e}"
+            f"JSON UPLOAD ERROR: {type(e).__name__}: {e}"
         )
 
         raise HTTPException(
@@ -659,13 +536,18 @@ async def upload_json(payload: FileUploadRequest):
 
 @app.post("/api/upload-raw")
 async def upload_raw(request: Request):
+    session_id = get_session_id(request)
+
+    if not session_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Session not initialized. Refresh the page."
+        )
 
     try:
-
         raw = await request.body()
 
         if not raw:
-
             raise HTTPException(
                 status_code=400,
                 detail="Uploaded file is empty."
@@ -676,84 +558,26 @@ async def upload_raw(request: Request):
             "upload.csv"
         ).lower()
 
-        if filename.endswith(".xlsx"):
-
-            df = pd.read_excel(
-                BytesIO(raw),
-                engine="openpyxl"
-            )
-
-        elif filename.endswith(".csv"):
-
-            df = pd.read_csv(
-                BytesIO(raw)
-            )
-
-        else:
-
-            raise HTTPException(
-                status_code=400,
-                detail="Please upload a .xlsx or .csv file."
-            )
-
-        norm = normalize(df)
-
-        c = conn()
-
-        c.execute(
-            "DELETE FROM transactions"
-        )
-
-        c.executemany(
-            """
-            INSERT INTO transactions(
-                tx_date,
-                description,
-                amount,
-                category,
-                confidence,
-                is_review
-            )
-            VALUES(?,?,?,?,?,?)
-            """,
-            [
-                (
-                    r.tx_date.strftime("%Y-%m-%d"),
-                    r.description,
-                    float(r.amount),
-                    r.category,
-                    float(r.confidence),
-                    int(r.is_review)
-                )
-                for r in norm.itertuples()
-            ]
-        )
-
-        c.commit()
-        c.close()
+        df = dataframe_from_bytes(raw, filename)
+        norm = store_dataframe(df, session_id)
 
         print(
-            f"RAW UPLOAD: successfully stored "
-            f"{len(norm)} transactions"
+            f"RAW UPLOAD: session={session_id[:8]} "
+            f"stored {len(norm)} transactions"
         )
 
         return {
             "ok": True,
             "rows": len(norm),
-            "columns": [
-                str(col)
-                for col in df.columns
-            ]
+            "columns": [str(col) for col in df.columns]
         }
 
     except HTTPException:
         raise
 
     except Exception as e:
-
         print(
-            f"RAW UPLOAD ERROR: "
-            f"{type(e).__name__}: {e}"
+            f"RAW UPLOAD ERROR: {type(e).__name__}: {e}"
         )
 
         raise HTTPException(
@@ -770,7 +594,11 @@ async def upload_raw(request: Request):
 # ============================================================
 
 @app.get("/api/transactions")
-def transactions(limit: int = 500):
+def transactions(request: Request, limit: int = 500):
+    session_id = get_session_id(request)
+
+    if not session_id:
+        return []
 
     c = conn()
 
@@ -778,17 +606,24 @@ def transactions(limit: int = 500):
         dict(r)
         for r in c.execute(
             """
-            SELECT *
+            SELECT
+                id,
+                tx_date,
+                description,
+                amount,
+                category,
+                confidence,
+                is_review
             FROM transactions
+            WHERE session_id=?
             ORDER BY tx_date DESC
             LIMIT ?
             """,
-            (limit,)
+            (session_id, limit)
         )
     ]
 
     c.close()
-
     return rows
 
 
@@ -798,14 +633,19 @@ def transactions(limit: int = 500):
 
 @app.post("/api/transactions/{tx_id}/category")
 def update_category(
+    request: Request,
     tx_id: int,
     body: dict
 ):
+    session_id = get_session_id(request)
 
-    category = body.get(
-        "category",
-        ""
-    ).strip()
+    if not session_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Session not initialized."
+        )
+
+    category = body.get("category", "").strip()
 
     allowed = {
         "Revenue",
@@ -815,7 +655,6 @@ def update_category(
     }
 
     if category not in allowed:
-
         raise HTTPException(
             status_code=400,
             detail="Invalid category."
@@ -830,27 +669,24 @@ def update_category(
             category=?,
             confidence=1.0,
             is_review=0
-        WHERE id=?
+        WHERE id=? AND session_id=?
         """,
-        (
-            category,
-            tx_id
-        )
+        (category, tx_id, session_id)
     )
 
     c.commit()
     c.close()
 
-    return {
-        "ok": True
-    }
+    return {"ok": True}
 
 
 # ============================================================
 # P&L CALCULATION
 # ============================================================
 
-def pnl():
+def pnl(session_id):
+    if not session_id:
+        return []
 
     c = conn()
 
@@ -861,8 +697,10 @@ def pnl():
             amount,
             category
         FROM transactions
+        WHERE session_id=?
         """,
-        c
+        c,
+        params=(session_id,)
     )
 
     c.close()
@@ -870,9 +708,7 @@ def pnl():
     if df.empty:
         return []
 
-    df["tx_date"] = pd.to_datetime(
-        df["tx_date"]
-    )
+    df["tx_date"] = pd.to_datetime(df["tx_date"])
 
     df["month"] = (
         df["tx_date"]
@@ -880,94 +716,74 @@ def pnl():
         .astype(str)
     )
 
-    # Group by month/category
     grouped = (
-        df.groupby(
-            ["month", "category"]
-        )["amount"]
+        df.groupby(["month", "category"])["amount"]
         .sum()
-        .unstack(
-            fill_value=0
-        )
+        .unstack(fill_value=0)
     )
 
     result = []
 
     for month, row in grouped.iterrows():
-
         revenue = float(
-            row.get(
-                "Revenue",
-                0
-            )
+            row.get("Revenue", 0)
         )
 
-        cogs = abs(
-            float(
-                row.get(
-                    "Cost of Goods Sold",
-                    0
-                )
-            )
-        )
+        cogs = abs(float(
+            row.get("Cost of Goods Sold", 0)
+        ))
 
-        payroll = abs(
-            float(
-                row.get(
-                    "Payroll",
-                    0
-                )
-            )
-        )
+        payroll = abs(float(
+            row.get("Payroll", 0)
+        ))
 
-        opex = abs(
-            float(
-                row.get(
-                    "Operating Expenses",
-                    0
-                )
-            )
-        )
+        opex = abs(float(
+            row.get("Operating Expenses", 0)
+        ))
 
-        gross = (
-            revenue
-            - cogs
-        )
+        gross = revenue - cogs
+        operating_profit = gross - payroll - opex
 
-        operating_profit = (
-            gross
-            - payroll
-            - opex
-        )
-
-        result.append(
-            {
-                "month": month,
-                "revenue": revenue,
-                "cogs": cogs,
-                "gross_profit": gross,
-                "payroll": payroll,
-                "operating_expenses": opex,
-                "operating_profit": operating_profit
-            }
-        )
+        result.append({
+            "month": month,
+            "revenue": revenue,
+            "cogs": cogs,
+            "gross_profit": gross,
+            "payroll": payroll,
+            "operating_expenses": opex,
+            "operating_profit": operating_profit
+        })
 
     return result
 
-@app.post("/api/reset")
-def reset_data():
-    conn = sqlite3.connect(DB)
-    conn.execute("DELETE FROM transactions")
-    conn.commit()
-    deleted = conn.total_changes
-    conn.close()
 
-    return {"ok": True, "deleted": deleted}
+@app.post("/api/reset")
+def reset_data(request: Request):
+    session_id = get_session_id(request)
+
+    if not session_id:
+        return {"ok": True, "deleted": 0}
+
+    c = conn()
+
+    c.execute(
+        "DELETE FROM transactions WHERE session_id=?",
+        (session_id,)
+    )
+
+    deleted = c.rowcount
+    c.commit()
+    c.close()
+
+    return {
+        "ok": True,
+        "deleted": deleted
+    }
+
 
 @app.get("/api/pnl")
-def get_pnl():
-
-    return pnl()
+def get_pnl(request: Request):
+    return pnl(get_session_id(request))
 
 
 # ============================================================
@@ -975,61 +791,32 @@ def get_pnl():
 # ============================================================
 
 @app.get("/api/variance")
-def variance():
-
-    rows = pnl()
-
+def variance(request: Request):
+    rows = pnl(get_session_id(request))
     out = []
 
-    for a, b in zip(
-        rows,
-        rows[1:]
-    ):
-
-        out.append(
-            {
-                "from_month":
-                    a["month"],
-
-                "to_month":
-                    b["month"],
-
-                "profit_change":
-                    round(
-                        b["operating_profit"]
-                        - a["operating_profit"],
-                        2
-                    ),
-
-                "revenue_change":
-                    round(
-                        b["revenue"]
-                        - a["revenue"],
-                        2
-                    ),
-
-                "cogs_change":
-                    round(
-                        b["cogs"]
-                        - a["cogs"],
-                        2
-                    ),
-
-                "payroll_change":
-                    round(
-                        b["payroll"]
-                        - a["payroll"],
-                        2
-                    ),
-
-                "opex_change":
-                    round(
-                        b["operating_expenses"]
-                        - a["operating_expenses"],
-                        2
-                    )
-            }
-        )
+    for a, b in zip(rows, rows[1:]):
+        out.append({
+            "from_month": a["month"],
+            "to_month": b["month"],
+            "profit_change": round(
+                b["operating_profit"]
+                - a["operating_profit"], 2
+            ),
+            "revenue_change": round(
+                b["revenue"] - a["revenue"], 2
+            ),
+            "cogs_change": round(
+                b["cogs"] - a["cogs"], 2
+            ),
+            "payroll_change": round(
+                b["payroll"] - a["payroll"], 2
+            ),
+            "opex_change": round(
+                b["operating_expenses"]
+                - a["operating_expenses"], 2
+            )
+        })
 
     return out
 
@@ -1038,7 +825,12 @@ def variance():
 # AI CONTEXT
 # ============================================================
 
-def context_for_ai():
+def context_for_ai(session_id):
+    if not session_id:
+        return {
+            "pnl": [],
+            "transactions": []
+        }
 
     c = conn()
 
@@ -1053,15 +845,17 @@ def context_for_ai():
                 amount,
                 category
             FROM transactions
+            WHERE session_id=?
             ORDER BY tx_date
-            """
+            """,
+            (session_id,)
         ).fetchall()
     ]
 
     c.close()
 
     return {
-        "pnl": pnl(),
+        "pnl": pnl(session_id),
         "transactions": tx[:1000]
     }
 
@@ -1075,25 +869,18 @@ class ChatIn(BaseModel):
 
 
 @app.post("/api/chat")
-def chat(body: ChatIn):
-
-    ctx = context_for_ai()
+def chat(request: Request, body: ChatIn):
+    session_id = get_session_id(request)
+    ctx = context_for_ai(session_id)
 
     q = body.question.lower().strip()
 
-    # --------------------------------------------------------
-    # REVENUE
-    # --------------------------------------------------------
-
     if "revenue" in q:
-
         months = ctx["pnl"]
 
         if months:
-
             parts = [
-                f'{m["month"]}: '
-                f'{m["revenue"]:.2f}'
+                f'{m["month"]}: {m["revenue"]:.2f}'
                 for m in months
             ]
 
@@ -1101,46 +888,33 @@ def chat(body: ChatIn):
                 "answer":
                     "Verified revenue from transaction data: "
                     + "; ".join(parts),
-
                 "evidence":
                     "P&L calculated directly from stored transactions."
             }
 
-    # --------------------------------------------------------
-    # PAYROLL
-    # --------------------------------------------------------
-
     if "payroll" in q:
-
         parts = [
-            f'{m["month"]}: '
-            f'{m["payroll"]:.2f}'
+            f'{m["month"]}: {m["payroll"]:.2f}'
             for m in ctx["pnl"]
         ]
 
-        return {
-            "answer":
-                "Verified payroll by month: "
-                + "; ".join(parts),
-
-            "evidence":
-                "Payroll category totals calculated from transactions."
-        }
-
-    # --------------------------------------------------------
-    # PROFIT / VARIANCE
-    # --------------------------------------------------------
+        if parts:
+            return {
+                "answer":
+                    "Verified payroll by month: "
+                    + "; ".join(parts),
+                "evidence":
+                    "Payroll category totals calculated from transactions."
+            }
 
     if (
         "profit" in q
         or "variance" in q
         or "change" in q
     ):
-
-        vs = variance()
+        vs = variance(request)
 
         if vs:
-
             x = vs[-1]
 
             return {
@@ -1157,29 +931,17 @@ def chat(body: ChatIn):
                     f'{x["payroll_change"]:.2f}; '
                     f'Operating expense change: '
                     f'{x["opex_change"]:.2f}.',
-
                 "evidence":
-                    "Variance calculated deterministically "
-                    "from monthly P&L."
+                    "Variance calculated deterministically from monthly P&L."
             }
 
-    # --------------------------------------------------------
-    # OPTIONAL OPENAI
-    # --------------------------------------------------------
-
-    key = os.getenv(
-        "OPENAI_API_KEY"
-    )
+    key = os.getenv("OPENAI_API_KEY")
 
     if key:
-
         try:
-
             from openai import OpenAI
 
-            client = OpenAI(
-                api_key=key
-            )
+            client = OpenAI(api_key=key)
 
             prompt = (
                 "You are a financial analyst assistant. "
@@ -1211,26 +973,18 @@ def chat(body: ChatIn):
             return {
                 "answer":
                     response.choices[0].message.content,
-
                 "evidence":
                     "Answer grounded in verified application data."
             }
 
         except Exception as e:
-
             return {
                 "answer":
                     "AI provider error. "
                     "The deterministic financial APIs "
                     "are still available.",
-
-                "evidence":
-                    str(e)
+                "evidence": str(e)
             }
-
-    # --------------------------------------------------------
-    # DEFAULT RESPONSE
-    # --------------------------------------------------------
 
     return {
         "answer":
@@ -1238,7 +992,6 @@ def chat(body: ChatIn):
             "is loaded. Try: 'What was our revenue?', "
             "'How much did we spend on payroll?', "
             "or 'Why did profit change?'.",
-
         "evidence":
             "No LLM key configured; deterministic "
             "financial endpoints are available."
