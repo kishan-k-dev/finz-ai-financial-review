@@ -509,6 +509,11 @@ class FileUploadRequest(BaseModel):
     data: str
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 @app.post("/api/upload-json")
 async def upload_json(payload: FileUploadRequest):
 
