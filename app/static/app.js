@@ -115,12 +115,29 @@ async function refresh() {
     ]);
 }
 
-window.addEventListener("load", async () => {
-    await fetch("/api/reset", {
-        method: "POST"
-    });
+// ============================================================
+// INITIAL LOAD
+// ============================================================
 
-    location.reload();
+window.addEventListener("load", async () => {
+    try {
+        // Clear any previously stored shared transaction data
+        const resetResponse = await fetch("/api/reset", {
+            method: "POST",
+            cache: "no-store"
+        });
+
+        if (!resetResponse.ok) {
+            console.error("Failed to reset previous data");
+        }
+
+        // Only load dashboard AFTER reset is complete
+        await refresh();
+
+    } catch (error) {
+        console.error("Initial load error:", error);
+        await refresh();
+    }
 });
 // ============================================================
 // MONTHLY P&L
