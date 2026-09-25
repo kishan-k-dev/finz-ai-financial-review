@@ -946,6 +946,15 @@ def pnl():
 
     return result
 
+@app.post("/api/reset")
+def reset_data():
+    conn = sqlite3.connect(DB)
+    conn.execute("DELETE FROM transactions")
+    conn.commit()
+    deleted = conn.total_changes
+    conn.close()
+
+    return {"ok": True, "deleted": deleted}
 
 @app.get("/api/pnl")
 def get_pnl():

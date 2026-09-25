@@ -115,7 +115,13 @@ async function refresh() {
     ]);
 }
 
+window.addEventListener("load", async () => {
+    await fetch("/api/reset", {
+        method: "POST"
+    });
 
+    location.reload();
+});
 // ============================================================
 // MONTHLY P&L
 // ============================================================
