@@ -384,6 +384,14 @@ def normalize(df):
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
 
+    # Start every new page visit with a fresh dataset.
+    # This prevents previously uploaded financial data from
+    # remaining visible to the next visitor.
+    c = conn()
+    c.execute("DELETE FROM transactions")
+    c.commit()
+    c.close()
+
     return templates.TemplateResponse(
         "index.html",
         {
