@@ -26,6 +26,16 @@ DB = BASE / "finz.db"
 
 app = FastAPI(title="Finz AI Financial Review MVP")
 
+
+@app.middleware("http")
+async def no_cache_middleware(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0, private"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 app.mount(
     "/static",
     StaticFiles(directory=BASE / "app" / "static"),
@@ -77,6 +87,12 @@ init_db()
 
 
 def get_session_id(request: Request):
+    # Primary session source: browser-generated header.
+    # Cookie remains as a fallback for older clients.
+    session_id = request.headers.get("X-Finz-Session")
+    if session_id:
+        return session_id.strip()
+
     return request.cookies.get("finz_session")
 
 
@@ -455,6 +471,25 @@ class FileUploadRequest(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/debug/session")
+def debug_session(request: Request):
+    session_id = get_session_id(request)
+    if not session_id:
+        return {"session": None, "rows": 0}
+
+    c = conn()
+    row = c.execute(
+        "SELECT COUNT(*) AS count FROM transactions WHERE session_id=?",
+        (session_id,)
+    ).fetchone()
+    c.close()
+
+    return {
+        "session": session_id[:12],
+        "rows": int(row["count"])
+    }
 
 
 @app.post("/api/upload-json")

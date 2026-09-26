@@ -1,4 +1,72 @@
 // ============================================================
+// BROWSER SESSION ISOLATION
+// ============================================================
+//
+// Each browser context gets its own unique session ID.
+//
+// Normal Chrome:
+// finz_session_id = one ID
+//
+// Incognito:
+// finz_session_id = different ID
+//
+// The ID is sent to the backend using X-Finz-Session.
+//
+
+function getSessionId() {
+    let id = localStorage.getItem("finz_session_id");
+
+    if (!id) {
+        if (window.crypto && crypto.randomUUID) {
+            id = crypto.randomUUID();
+        } else {
+            id =
+                "finz-" +
+                Date.now() +
+                "-" +
+                Math.random().toString(36).slice(2);
+        }
+
+        localStorage.setItem("finz_session_id", id);
+    }
+
+    return id;
+}
+
+
+// ============================================================
+// API FETCH HELPER
+// ============================================================
+//
+// Every API request goes through this function.
+//
+// It automatically:
+// 1. Adds X-Finz-Session
+// 2. Prevents browser caching
+// 3. Keeps same-origin credentials
+//
+
+function apiFetch(url, options = {}) {
+    const headers = new Headers(options.headers || {});
+
+    headers.set("X-Finz-Session", getSessionId());
+
+    return fetch(url, {
+        ...options,
+        headers: headers,
+        credentials: "same-origin",
+        cache: "no-store"
+    });
+}
+
+
+// Create the session as soon as the JS loads
+getSessionId();
+
+console.log("Finz session:", getSessionId());
+
+
+// ============================================================
 // FILE UPLOAD
 // ============================================================
 
@@ -39,17 +107,24 @@ async function upload() {
             reader.readAsDataURL(f);
         });
 
-        const r = await fetch("/api/upload-json", {
+
+        // IMPORTANT:
+        // Use apiFetch instead of fetch so the session ID
+        // is sent to the backend.
+
+        const r = await apiFetch("/api/upload-json", {
             method: "POST",
-            credentials: "same-origin",
+
             headers: {
                 "Content-Type": "application/json"
             },
+
             body: JSON.stringify({
                 filename: f.name,
                 data: base64
             })
         });
+
 
         const text = await r.text();
 
@@ -61,30 +136,43 @@ async function upload() {
             } catch (error) {
                 status.textContent =
                     `Upload failed: HTTP ${r.status} ${r.statusText}`;
-                console.error("Invalid JSON response:", text);
+
+                console.error(
+                    "Invalid JSON response:",
+                    text
+                );
+
                 return;
             }
         }
 
+
         if (!r.ok) {
             status.textContent =
                 `Upload failed: ${d?.detail || `HTTP ${r.status}`}`;
+
             return;
         }
+
 
         if (d && d.ok) {
             status.textContent =
                 `Loaded ${d.rows} transactions`;
 
             await refresh();
+
             return;
         }
+
 
         status.textContent =
             "Upload failed: Unexpected server response.";
 
     } catch (error) {
-        console.error("Upload error:", error);
+        console.error(
+            "Upload error:",
+            error
+        );
 
         status.textContent =
             `Upload failed: ${error.message}`;
@@ -111,21 +199,23 @@ async function refresh() {
 
 async function loadPnl() {
     try {
-        const r = await fetch("/api/pnl", {
-            credentials: "same-origin",
-            cache: "no-store"
-        });
+
+        const r = await apiFetch("/api/pnl");
+
 
         if (!r.ok) {
             throw new Error(`HTTP ${r.status}`);
         }
 
+
         const d = await r.json();
+
 
         document.getElementById("pnl").innerHTML =
             d.length
                 ? `
                     <table class="table">
+
                         <tr>
                             <th>Month</th>
                             <th>Revenue</th>
@@ -138,15 +228,37 @@ async function loadPnl() {
 
                         ${d.map(x => `
                             <tr>
-                                <td>${x.month}</td>
-                                <td>${fmt(x.revenue)}</td>
-                                <td>${fmt(x.cogs)}</td>
-                                <td>${fmt(x.gross_profit)}</td>
-                                <td>${fmt(x.payroll)}</td>
-                                <td>${fmt(x.operating_expenses)}</td>
+
                                 <td>
-                                    <b>${fmt(x.operating_profit)}</b>
+                                    ${x.month}
                                 </td>
+
+                                <td>
+                                    ${fmt(x.revenue)}
+                                </td>
+
+                                <td>
+                                    ${fmt(x.cogs)}
+                                </td>
+
+                                <td>
+                                    ${fmt(x.gross_profit)}
+                                </td>
+
+                                <td>
+                                    ${fmt(x.payroll)}
+                                </td>
+
+                                <td>
+                                    ${fmt(x.operating_expenses)}
+                                </td>
+
+                                <td>
+                                    <b>
+                                        ${fmt(x.operating_profit)}
+                                    </b>
+                                </td>
+
                             </tr>
                         `).join("")}
 
@@ -155,7 +267,11 @@ async function loadPnl() {
                 : "Upload data first.";
 
     } catch (error) {
-        console.error("P&L error:", error);
+
+        console.error(
+            "P&L error:",
+            error
+        );
 
         document.getElementById("pnl").textContent =
             "Unable to load P&L.";
@@ -169,16 +285,17 @@ async function loadPnl() {
 
 async function loadVariance() {
     try {
-        const r = await fetch("/api/variance", {
-            credentials: "same-origin",
-            cache: "no-store"
-        });
+
+        const r = await apiFetch("/api/variance");
+
 
         if (!r.ok) {
             throw new Error(`HTTP ${r.status}`);
         }
 
+
         const d = await r.json();
+
 
         document.getElementById("variance").innerHTML =
             d.length
@@ -198,14 +315,17 @@ async function loadVariance() {
 
                         Revenue:
                         ${fmt(x.revenue_change)}
+
                         |
 
                         COGS:
                         ${fmt(x.cogs_change)}
+
                         |
 
                         Payroll:
                         ${fmt(x.payroll_change)}
+
                         |
 
                         Opex:
@@ -216,7 +336,11 @@ async function loadVariance() {
                 : "Upload at least two months.";
 
     } catch (error) {
-        console.error("Variance error:", error);
+
+        console.error(
+            "Variance error:",
+            error
+        );
 
         document.getElementById("variance").textContent =
             "Unable to load variance.";
@@ -230,16 +354,17 @@ async function loadVariance() {
 
 async function loadTx() {
     try {
-        const r = await fetch("/api/transactions", {
-            credentials: "same-origin",
-            cache: "no-store"
-        });
+
+        const r = await apiFetch("/api/transactions");
+
 
         if (!r.ok) {
             throw new Error(`HTTP ${r.status}`);
         }
 
+
         const d = await r.json();
+
 
         document.getElementById("tx").innerHTML =
             d.length
@@ -247,27 +372,39 @@ async function loadTx() {
                     <table class="table">
 
                         <tr>
+
                             <th>Date</th>
+
                             <th>Description</th>
+
                             <th>Amount</th>
+
                             <th>Category</th>
+
                             <th>Review</th>
+
                         </tr>
 
+
                         ${d.slice(0, 200).map(x => `
-                            <tr class="${x.is_review ? "review" : ""}">
+                            <tr
+                                class="${x.is_review ? "review" : ""}"
+                            >
 
                                 <td>
                                     ${x.tx_date}
                                 </td>
 
+
                                 <td>
                                     ${esc(x.description)}
                                 </td>
 
+
                                 <td>
                                     ${fmt(x.amount)}
                                 </td>
+
 
                                 <td>
 
@@ -300,12 +437,15 @@ async function loadTx() {
 
                                 </td>
 
+
                                 <td>
+
                                     ${
                                         x.is_review
                                             ? "⚠️ Review"
                                             : ""
                                     }
+
                                 </td>
 
                             </tr>
@@ -316,7 +456,11 @@ async function loadTx() {
                 : "Upload data first.";
 
     } catch (error) {
-        console.error("Transaction error:", error);
+
+        console.error(
+            "Transaction error:",
+            error
+        );
 
         document.getElementById("tx").textContent =
             "Unable to load transactions.";
@@ -331,12 +475,10 @@ async function loadTx() {
 async function cat(id, category) {
     try {
 
-        const r = await fetch(
+        const r = await apiFetch(
             `/api/transactions/${id}/category`,
             {
                 method: "POST",
-
-                credentials: "same-origin",
 
                 headers: {
                     "Content-Type": "application/json"
@@ -348,9 +490,12 @@ async function cat(id, category) {
             }
         );
 
+
         const text = await r.text();
 
+
         if (!r.ok) {
+
             console.error(
                 "Category update failed:",
                 text
@@ -358,6 +503,7 @@ async function cat(id, category) {
 
             return;
         }
+
 
         await refresh();
 
@@ -381,24 +527,26 @@ async function ask(q) {
         q ||
         document.getElementById("q").value;
 
+
     if (!question) {
         return;
     }
 
+
     const answerBox =
         document.getElementById("answer");
+
 
     answerBox.textContent =
         "Analyzing...";
 
+
     try {
 
-        const r = await fetch(
+        const r = await apiFetch(
             "/api/chat",
             {
                 method: "POST",
-
-                credentials: "same-origin",
 
                 headers: {
                     "Content-Type": "application/json"
@@ -410,9 +558,12 @@ async function ask(q) {
             }
         );
 
+
         const text = await r.text();
 
+
         let d = null;
+
 
         if (text) {
 
@@ -429,6 +580,7 @@ async function ask(q) {
             }
         }
 
+
         if (!r.ok) {
 
             answerBox.textContent =
@@ -438,6 +590,7 @@ async function ask(q) {
             return;
         }
 
+
         if (!d) {
 
             answerBox.textContent =
@@ -445,6 +598,7 @@ async function ask(q) {
 
             return;
         }
+
 
         answerBox.textContent =
             `${d.answer || ""}\n\nEvidence: ${d.evidence || ""}`;
@@ -503,8 +657,19 @@ function esc(s) {
 
 window.addEventListener("load", async () => {
 
-    // DO NOT reset the database here.
-    // Backend now separates data using finz_session cookie.
+    // IMPORTANT:
+    // DO NOT RESET DATABASE HERE.
+    //
+    // The backend separates transactions using
+    // X-Finz-Session.
+    //
+    // Every browser gets its own session ID.
+
+    console.log(
+        "Finz session:",
+        getSessionId()
+    );
+
 
     await refresh();
 
