@@ -5,6 +5,7 @@ import base64
 import uuid
 from pathlib import Path
 from io import BytesIO
+from fastapi import Request
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -76,16 +77,15 @@ init_db()
 
 
 def get_session_id(request: Request):
-    """Return the browser's session cookie."""
     return request.cookies.get("finz_session")
 
 
 def ensure_session(response, request):
-    """Create a browser session cookie if this is a new visitor."""
     session_id = get_session_id(request)
 
     if not session_id:
         session_id = uuid.uuid4().hex
+
         response.set_cookie(
             key="finz_session",
             value=session_id,
@@ -96,7 +96,6 @@ def ensure_session(response, request):
         )
 
     return session_id
-
 
 # ============================================================
 # CATEGORY RULES
