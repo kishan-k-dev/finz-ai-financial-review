@@ -59,9 +59,9 @@ app.mount(
     name="static"
 )
 
-templates = Jinja2Templates(
-    directory=BASE / "app" / "templates"
-)
+templates = Jinja2Templates(directory="app/templates")
+# OR it might say:
+templates = Jinja2Templates(directory="templates")
 
 # ============================================================
 # DATABASE
