@@ -24,7 +24,7 @@ load_dotenv()
 BASE = Path(__file__).resolve().parent.parent
 DB = BASE / "finz.db"
 
-app = FastAPI(title="Finz AI Financial Review MVP")
+app = FastAPI(title="AI Financial Review MVP")
 
 # ============================================================
 # NO-CACHE MIDDLEWARE
@@ -59,9 +59,9 @@ app.mount(
     name="static"
 )
 
-templates = Jinja2Templates(directory="app/templates")
-# OR it might say:
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(
+    directory=BASE / "app" / "templates"
+)
 
 # ============================================================
 # DATABASE
