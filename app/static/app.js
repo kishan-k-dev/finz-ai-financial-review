@@ -64,9 +64,16 @@ function getSessionId() {
 // ============================================================
 
 
-function apiFetch(url, options = {}) {
+function apiFetch (url, options = {}) {
 
     const sessionId = getSessionId();
+
+    const separator = url.includes("?")
+        ? "&"
+        : "?";
+
+    const sessionUrl =
+        `${url}${separator}session_id=${encodeURIComponent(sessionId)}`;
 
     const headers = new Headers(
         options.headers || {}
@@ -77,51 +84,12 @@ function apiFetch(url, options = {}) {
         sessionId
     );
 
-
-    // --------------------------------------------------------
-    // Add session_id to the URL
-    // --------------------------------------------------------
-    //
-    // Example:
-    //
-    // /api/pnl
-    //
-    // becomes:
-    //
-    // /api/pnl?session_id=abc123
-    //
-    // If the URL already has parameters, use & instead.
-    //
-
-    let requestUrl = url;
-
-    if (
-        url.startsWith("/api/") &&
-        !url.includes("session_id=")
-    ) {
-
-        const separator =
-            url.includes("?")
-                ? "&"
-                : "?";
-
-        requestUrl =
-            `${url}${separator}session_id=${encodeURIComponent(sessionId)}`;
-    }
-
-
-    return fetch(
-        requestUrl,
-        {
-            ...options,
-
-            headers: headers,
-
-            credentials: "same-origin",
-
-            cache: "no-store"
-        }
-    );
+    return fetch(sessionUrl, {
+        ...options,
+        headers: headers,
+        credentials: "same-origin",
+        cache: "no-store"
+    });
 }
 
 

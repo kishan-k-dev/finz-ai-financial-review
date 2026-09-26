@@ -123,8 +123,7 @@ init_db()
 # ============================================================
 
 def get_session_id(request: Request):
-    """
-    Get the browser/session ID.
+    """Get the browser/session ID.
 
     Priority:
     1. URL query parameter:
@@ -178,28 +177,12 @@ def get_session_id(request: Request):
 
 
 def ensure_session(response, request):
-    """
-    Make sure the browser has a session cookie.
+    """Ensure a browser session is available without creating cookies."""
 
-    The JavaScript client still uses localStorage + query
-    parameter/header as the primary session mechanism.
-    """
+    # Session is controlled by JavaScript localStorage.
+    # We intentionally do NOT create or use a cookie.
 
-    session_id = get_session_id(request)
-
-    if not session_id:
-        session_id = uuid.uuid4().hex
-
-        response.set_cookie(
-            key="finz_session",
-            value=session_id,
-            httponly=True,
-            samesite="lax",
-            secure=True,
-            max_age=60 * 60 * 24 * 30,
-        )
-
-    return session_id
+    return get_session_id(request)
 
 
 # ============================================================
