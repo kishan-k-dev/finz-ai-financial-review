@@ -1,38 +1,222 @@
-<!-- Include this inside your templates/index.html <head> section -->
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    margin: 0;
-    padding: 10px;
-    background-color: #f8f9fa;
-    color: #333;
-  }
-  .container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 10px;
-  }
-  .table-responsive {
-    width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    margin-bottom: 15px;
-  }
-  table.table {
-    width: 100%;
-    border-collapse: collapse;
-    white-space: nowrap;
-  }
-  table.table th, table.table td {
-    padding: 8px 12px;
-    border-bottom: 1px solid #ddd;
-    text-align: left;
-    font-size: 14px;
-  }
-  @media (max-width: 768px) {
-    body { padding: 5px; }
-    h1 { font-size: 22px; }
-    .card { padding: 12px !important; }
-  }
-</style>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI-Financial Review</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            padding: 10px;
+            background-color: #f8f9fa;
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 10px;
+        }
+        .header-container {
+            background-color: #0f172a;
+            color: white;
+            padding: 24px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .header-container h1 {
+            margin: 0 0 8px 0;
+            font-size: 28px;
+        }
+        .header-container p {
+            margin: 0;
+            color: #94a3b8;
+            font-size: 14px;
+        }
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .table-responsive {
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            margin-bottom: 15px;
+        }
+        table.table {
+            width: 100%;
+            border-collapse: collapse;
+            white-space: nowrap;
+        }
+        table.table th, table.table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #ddd;
+            text-align: left;
+            font-size: 14px;
+        }
+        table.table th {
+            background-color: #f1f5f9;
+            font-weight: 600;
+        }
+        .btn {
+            background-color: #0f172a;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .btn:hover {
+            background-color: #1e293b;
+        }
+        @media (max-width: 768px) {
+            body { padding: 5px; }
+            .header-container h1 { font-size: 22px; }
+            .card { padding: 12px !important; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        
+        <!-- Header Section (You can change your app title here!) -->
+        <div class="header-container">
+            <h1>Finz Financial Review</h1>
+            <p>AI-native transaction review • deterministic financial calculations</p>
+        </div>
+
+        <!-- Import Transactions Card -->
+        <div class="card">
+            <h3>1. Import transactions</h3>
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <input type="file" id="fileInput" accept=".xlsx, .csv">
+                <button class="btn" onclick="uploadFile()">Upload</button>
+                <span id="uploadStatus" style="font-size: 14px; color: #666;"></span>
+            </div>
+        </div>
+
+        <!-- Financial Overview Section -->
+        <div style="display: grid; grid-template-columns: 1fr; gap: 20px;">
+            <div class="card">
+                <h3>Monthly P&L</h3>
+                <div class="table-responsive">
+                    <table class="table" id="pnlTable">
+                        <thead>
+                            <tr>
+                                <th>Month</th>
+                                <th>Revenue</th>
+                                <th>COGS</th>
+                                <th>Gross</th>
+                                <th>Payroll</th>
+                                <th>Opex</th>
+                                <th>Operating Profit</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Populated dynamically via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Frontend Script handling Session isolation & API communication -->
+    <script>
+        // 1. Generate or retrieve unique secure device session ID
+        let sessionId = localStorage.getItem("finz_session");
+        if (!sessionId || sessionId === "null" || sessionId === "undefined") {
+            sessionId = "dev_" + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2) + Date.now());
+            localStorage.setItem("finz_session", sessionId);
+        }
+
+        // 2. Global fetch interceptor to automatically pass the session ID header
+        const originalFetch = window.fetch;
+        window.fetch = async function(url, options = {}) {
+            options.headers = options.headers || {};
+            if (typeof url === 'string' && url.includes('/api/')) {
+                options.headers['X-Finz-Session'] = sessionId;
+            }
+            return originalFetch(url, options);
+        };
+
+        // 3. File upload handler function
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const statusSpan = document.getElementById('uploadStatus');
+            
+            if (fileInput.files.length === 0) {
+                alert("Please select a file first.");
+                return;
+            }
+
+            const file = fileInput.files[0];
+            statusSpan.innerText = "Uploading...";
+
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = async function () {
+                try {
+                    const base64Data = reader.result.split(',')[1];
+                    const response = await fetch('/api/upload-json', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            filename: file.name,
+                            data: base64Data
+                        })
+                    });
+
+                    const result = await response.json();
+                    if (response.ok) {
+                        statusSpan.innerText = `Success! Loaded ${result.rows} rows.`;
+                        loadPnLData(); // Refresh table view
+                    } else {
+                        statusSpan.innerText = "Upload failed.";
+                        alert("Upload failed: " + (result.detail || "Unknown error"));
+                    }
+                } catch (err) {
+                    statusSpan.innerText = "Error uploading file.";
+                    console.error(err);
+                }
+            };
+        }
+
+        async function loadPnLData() {
+            try {
+                const response = await fetch('/api/pnl');
+                if (response.ok) {
+                    const data = await response.json();
+                    const tbody = document.querySelector('#pnlTable tbody');
+                    tbody.innerHTML = '';
+                    data.forEach(row => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td>${row.month}</td>
+                            <td>${row.revenue.toLocaleString()}</td>
+                            <td>${row.cogs.toLocaleString()}</td>
+                            <td>${row.gross_profit.toLocaleString()}</td>
+                            <td>${row.payroll.toLocaleString()}</td>
+                            <td>${row.operating_expenses.toLocaleString()}</td>
+                            <td><strong>${row.operating_profit.toLocaleString()}</strong></td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                }
+            } catch (e) {
+                console.error("Could not load PnL data", e);
+            }
+        }
+
+        // Load data on start
+        loadPnLData();
+    </script>
+</body>
+</html>
