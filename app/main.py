@@ -14,6 +14,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi import FastAPI, Header, HTTPException, UploadFile, File
 
 
 # ============================================================
@@ -31,6 +32,30 @@ app = FastAPI(title="Finz AI Financial Review MVP")
 # ============================================================
 # NO-CACHE MIDDLEWARE
 # ============================================================
+
+app = FastAPI()
+
+# Store data per session instead of a single global variable
+session_storage = {}
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...), x_session_id: str = Header(None)):
+    if not x_session_id:
+        raise HTTPException(status_code=400, detail="Session ID missing")
+
+    # Process file data...
+    processed_result = {"filename": file.filename, "data": "Your extracted data here"}
+
+    # Save strictly to this session's key
+    session_storage[x_session_id] = processed_result
+    return processed_result
+
+@app.get("/get-data")
+async def get_data(x_session_id: str = Header(None)):
+    if not x_session_id or x_session_id not in session_storage:
+        return {"data": None} # Return empty if no data for this specific user
+
+    return session_storage[x_session_id]
 
 @app.middleware("http")
 async def no_cache_middleware(request: Request, call_next):
