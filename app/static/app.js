@@ -69,6 +69,27 @@ async function fetchData() {
 // - Uses same-origin credentials
 // ============================================================
 
+// 1. Get or create a unique session ID for this browser
+let sessionId = localStorage.getItem("finz_session");
+if (!sessionId) {
+    sessionId = "sess_" + Math.random().toString(36).substring(2, 11) + "_" + Date.now();
+    localStorage.setItem("finz_session", sessionId);
+}
+
+// 2. Automatically intercept ALL fetch requests to inject the session header
+const originalFetch = window.fetch;
+window.fetch = async function(url, options = {}) {
+    options.headers = options.headers || {};
+    
+    // If the request goes to your backend /api/ routes, attach the session ID header
+    if (typeof url === 'string' && url.includes('/api/')) {
+        options.headers['X-Finz-Session'] = sessionId;
+    }
+    
+    return originalFetch(url, options);
+};
+
+console.log("Finz Session Active:", sessionId);
 
 function apiFetch (url, options = {}) {
 
