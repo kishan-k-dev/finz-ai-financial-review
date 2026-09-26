@@ -1,33 +1,49 @@
 // ============================================================
-// BROWSER SESSION ISOLATION
+// FINZ - BROWSER SESSION ISOLATION
 // ============================================================
 //
-// Each browser context gets its own unique session ID.
+// Every browser context gets its own unique session ID.
 //
 // Normal Chrome:
-// finz_session_id = one ID
+// finz_session_id = ABC123
 //
 // Incognito:
-// finz_session_id = different ID
+// finz_session_id = XYZ789
 //
-// The ID is sent to the backend using X-Finz-Session.
+// The session is sent in:
+// 1. X-Finz-Session header
+// 2. ?session_id= URL parameter
 //
+// The URL parameter is intentional. It prevents cached API
+// responses from being reused between different sessions.
+// ============================================================
+
 
 function getSessionId() {
     let id = localStorage.getItem("finz_session_id");
 
     if (!id) {
-        if (window.crypto && crypto.randomUUID) {
+
+        if (
+            window.crypto &&
+            typeof crypto.randomUUID === "function"
+        ) {
             id = crypto.randomUUID();
+
         } else {
             id =
                 "finz-" +
                 Date.now() +
                 "-" +
-                Math.random().toString(36).slice(2);
+                Math.random()
+                    .toString(36)
+                    .slice(2);
         }
 
-        localStorage.setItem("finz_session_id", id);
+        localStorage.setItem(
+            "finz_session_id",
+            id
+        );
     }
 
     return id;
@@ -41,29 +57,84 @@ function getSessionId() {
 // Every API request goes through this function.
 //
 // It automatically:
-// 1. Adds X-Finz-Session
-// 2. Prevents browser caching
-// 3. Keeps same-origin credentials
-//
+// - Adds X-Finz-Session
+// - Adds session_id to API URL
+// - Disables browser cache
+// - Uses same-origin credentials
+// ============================================================
+
 
 function apiFetch(url, options = {}) {
-    const headers = new Headers(options.headers || {});
 
-    headers.set("X-Finz-Session", getSessionId());
+    const sessionId = getSessionId();
 
-    return fetch(url, {
-        ...options,
-        headers: headers,
-        credentials: "same-origin",
-        cache: "no-store"
-    });
+    const headers = new Headers(
+        options.headers || {}
+    );
+
+    headers.set(
+        "X-Finz-Session",
+        sessionId
+    );
+
+
+    // --------------------------------------------------------
+    // Add session_id to the URL
+    // --------------------------------------------------------
+    //
+    // Example:
+    //
+    // /api/pnl
+    //
+    // becomes:
+    //
+    // /api/pnl?session_id=abc123
+    //
+    // If the URL already has parameters, use & instead.
+    //
+
+    let requestUrl = url;
+
+    if (
+        url.startsWith("/api/") &&
+        !url.includes("session_id=")
+    ) {
+
+        const separator =
+            url.includes("?")
+                ? "&"
+                : "?";
+
+        requestUrl =
+            `${url}${separator}session_id=${encodeURIComponent(sessionId)}`;
+    }
+
+
+    return fetch(
+        requestUrl,
+        {
+            ...options,
+
+            headers: headers,
+
+            credentials: "same-origin",
+
+            cache: "no-store"
+        }
+    );
 }
 
 
-// Create the session as soon as the JS loads
+// ============================================================
+// CREATE SESSION
+// ============================================================
+
 getSessionId();
 
-console.log("Finz session:", getSessionId());
+console.log(
+    "Finz session:",
+    getSessionId()
+);
 
 
 // ============================================================
@@ -71,75 +142,141 @@ console.log("Finz session:", getSessionId());
 // ============================================================
 
 async function upload() {
-    const f = document.getElementById("file").files[0];
+
+    const fileInput =
+        document.getElementById("file");
+
+    const f =
+        fileInput.files[0];
+
 
     if (!f) {
-        alert("Choose the dataset first");
+
+        alert(
+            "Choose the dataset first"
+        );
+
         return;
     }
 
-    const status = document.getElementById("status");
-    status.textContent = "Uploading...";
+
+    const status =
+        document.getElementById("status");
+
+    status.textContent =
+        "Uploading...";
+
 
     try {
-        const base64 = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
 
-            reader.onload = () => {
-                try {
-                    const parts = reader.result.split(",");
+        // ----------------------------------------------------
+        // Convert file to Base64
+        // ----------------------------------------------------
 
-                    if (parts.length < 2) {
-                        reject(new Error("Could not read the file."));
-                        return;
-                    }
+        const base64 =
+            await new Promise(
+                (resolve, reject) => {
 
-                    resolve(parts[1]);
-                } catch (error) {
-                    reject(error);
+                    const reader =
+                        new FileReader();
+
+
+                    reader.onload = () => {
+
+                        try {
+
+                            const parts =
+                                reader.result.split(",");
+
+
+                            if (
+                                parts.length < 2
+                            ) {
+
+                                reject(
+                                    new Error(
+                                        "Could not read the file."
+                                    )
+                                );
+
+                                return;
+                            }
+
+
+                            resolve(
+                                parts[1]
+                            );
+
+                        } catch (error) {
+
+                            reject(error);
+                        }
+                    };
+
+
+                    reader.onerror = () => {
+
+                        reject(
+                            new Error(
+                                "Failed to read the selected file."
+                            )
+                        );
+                    };
+
+
+                    reader.readAsDataURL(f);
                 }
-            };
-
-            reader.onerror = () => {
-                reject(new Error("Failed to read the selected file."));
-            };
-
-            reader.readAsDataURL(f);
-        });
+            );
 
 
-        // IMPORTANT:
-        // Use apiFetch instead of fetch so the session ID
-        // is sent to the backend.
+        // ----------------------------------------------------
+        // Upload
+        // ----------------------------------------------------
 
-        const r = await apiFetch("/api/upload-json", {
-            method: "POST",
+        const r =
+            await apiFetch(
+                "/api/upload-json",
+                {
+                    method: "POST",
 
-            headers: {
-                "Content-Type": "application/json"
-            },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-            body: JSON.stringify({
-                filename: f.name,
-                data: base64
-            })
-        });
+                    body: JSON.stringify({
+                        filename: f.name,
+                        data: base64
+                    })
+                }
+            );
 
 
-        const text = await r.text();
+        const responseText =
+            await r.text();
+
 
         let d = null;
 
-        if (text) {
+
+        if (responseText) {
+
             try {
-                d = JSON.parse(text);
+
+                d =
+                    JSON.parse(
+                        responseText
+                    );
+
             } catch (error) {
+
                 status.textContent =
                     `Upload failed: HTTP ${r.status} ${r.statusText}`;
 
+
                 console.error(
                     "Invalid JSON response:",
-                    text
+                    responseText
                 );
 
                 return;
@@ -148,16 +285,25 @@ async function upload() {
 
 
         if (!r.ok) {
+
             status.textContent =
-                `Upload failed: ${d?.detail || `HTTP ${r.status}`}`;
+                `Upload failed: ${
+                    d?.detail ||
+                    `HTTP ${r.status}`
+                }`;
 
             return;
         }
 
 
-        if (d && d.ok) {
+        if (
+            d &&
+            d.ok
+        ) {
+
             status.textContent =
                 `Loaded ${d.rows} transactions`;
+
 
             await refresh();
 
@@ -168,11 +314,14 @@ async function upload() {
         status.textContent =
             "Upload failed: Unexpected server response.";
 
+
     } catch (error) {
+
         console.error(
             "Upload error:",
             error
         );
+
 
         status.textContent =
             `Upload failed: ${error.message}`;
@@ -185,6 +334,7 @@ async function upload() {
 // ============================================================
 
 async function refresh() {
+
     await Promise.all([
         loadPnl(),
         loadVariance(),
@@ -198,39 +348,76 @@ async function refresh() {
 // ============================================================
 
 async function loadPnl() {
+
     try {
 
-        const r = await apiFetch("/api/pnl");
+        const r =
+            await apiFetch(
+                "/api/pnl"
+            );
 
 
         if (!r.ok) {
-            throw new Error(`HTTP ${r.status}`);
+
+            throw new Error(
+                `HTTP ${r.status}`
+            );
         }
 
 
-        const d = await r.json();
+        const d =
+            await r.json();
 
 
-        document.getElementById("pnl").innerHTML =
+        document.getElementById(
+            "pnl"
+        ).innerHTML =
+
             d.length
+
                 ? `
+
                     <table class="table">
 
                         <tr>
-                            <th>Month</th>
-                            <th>Revenue</th>
-                            <th>COGS</th>
-                            <th>Gross</th>
-                            <th>Payroll</th>
-                            <th>Opex</th>
-                            <th>Operating Profit</th>
+
+                            <th>
+                                Month
+                            </th>
+
+                            <th>
+                                Revenue
+                            </th>
+
+                            <th>
+                                COGS
+                            </th>
+
+                            <th>
+                                Gross
+                            </th>
+
+                            <th>
+                                Payroll
+                            </th>
+
+                            <th>
+                                Opex
+                            </th>
+
+                            <th>
+                                Operating Profit
+                            </th>
+
                         </tr>
 
+
                         ${d.map(x => `
+
                             <tr>
 
                                 <td>
-                                    ${x.month}
+                                    ${esc(x.month)}
                                 </td>
 
                                 <td>
@@ -254,17 +441,25 @@ async function loadPnl() {
                                 </td>
 
                                 <td>
+
                                     <b>
-                                        ${fmt(x.operating_profit)}
+                                        ${fmt(
+                                            x.operating_profit
+                                        )}
                                     </b>
+
                                 </td>
 
                             </tr>
+
                         `).join("")}
 
                     </table>
+
                 `
+
                 : "Upload data first.";
+
 
     } catch (error) {
 
@@ -273,7 +468,10 @@ async function loadPnl() {
             error
         );
 
-        document.getElementById("pnl").textContent =
+
+        document.getElementById(
+            "pnl"
+        ).textContent =
             "Unable to load P&L.";
     }
 }
@@ -284,56 +482,88 @@ async function loadPnl() {
 // ============================================================
 
 async function loadVariance() {
+
     try {
 
-        const r = await apiFetch("/api/variance");
+        const r =
+            await apiFetch(
+                "/api/variance"
+            );
 
 
         if (!r.ok) {
-            throw new Error(`HTTP ${r.status}`);
+
+            throw new Error(
+                `HTTP ${r.status}`
+            );
         }
 
 
-        const d = await r.json();
+        const d =
+            await r.json();
 
 
-        document.getElementById("variance").innerHTML =
+        document.getElementById(
+            "variance"
+        ).innerHTML =
+
             d.length
+
                 ? d.map(x => `
+
                     <div class="row">
 
                         <b>
-                            ${x.from_month} → ${x.to_month}
+                            ${esc(
+                                x.from_month
+                            )}
+                            →
+                            ${esc(
+                                x.to_month
+                            )}
                         </b>
 
                         <br>
 
                         Profit change:
-                        ${fmt(x.profit_change)}
+                        ${fmt(
+                            x.profit_change
+                        )}
 
                         <br>
 
                         Revenue:
-                        ${fmt(x.revenue_change)}
+                        ${fmt(
+                            x.revenue_change
+                        )}
 
                         |
 
                         COGS:
-                        ${fmt(x.cogs_change)}
+                        ${fmt(
+                            x.cogs_change
+                        )}
 
                         |
 
                         Payroll:
-                        ${fmt(x.payroll_change)}
+                        ${fmt(
+                            x.payroll_change
+                        )}
 
                         |
 
                         Opex:
-                        ${fmt(x.opex_change)}
+                        ${fmt(
+                            x.opex_change
+                        )}
 
                     </div>
+
                 `).join("")
+
                 : "Upload at least two months.";
+
 
     } catch (error) {
 
@@ -342,7 +572,10 @@ async function loadVariance() {
             error
         );
 
-        document.getElementById("variance").textContent =
+
+        document.getElementById(
+            "variance"
+        ).textContent =
             "Unable to load variance.";
     }
 }
@@ -353,63 +586,103 @@ async function loadVariance() {
 // ============================================================
 
 async function loadTx() {
+
     try {
 
-        const r = await apiFetch("/api/transactions");
+        const r =
+            await apiFetch(
+                "/api/transactions"
+            );
 
 
         if (!r.ok) {
-            throw new Error(`HTTP ${r.status}`);
+
+            throw new Error(
+                `HTTP ${r.status}`
+            );
         }
 
 
-        const d = await r.json();
+        const d =
+            await r.json();
 
 
-        document.getElementById("tx").innerHTML =
+        document.getElementById(
+            "tx"
+        ).innerHTML =
+
             d.length
+
                 ? `
+
                     <table class="table">
 
                         <tr>
 
-                            <th>Date</th>
+                            <th>
+                                Date
+                            </th>
 
-                            <th>Description</th>
+                            <th>
+                                Description
+                            </th>
 
-                            <th>Amount</th>
+                            <th>
+                                Amount
+                            </th>
 
-                            <th>Category</th>
+                            <th>
+                                Category
+                            </th>
 
-                            <th>Review</th>
+                            <th>
+                                Review
+                            </th>
 
                         </tr>
 
 
-                        ${d.slice(0, 200).map(x => `
+                        ${d.slice(
+                            0,
+                            200
+                        ).map(x => `
+
                             <tr
-                                class="${x.is_review ? "review" : ""}"
+                                class="${
+                                    x.is_review
+                                        ? "review"
+                                        : ""
+                                }"
                             >
 
                                 <td>
-                                    ${x.tx_date}
+                                    ${esc(
+                                        x.tx_date
+                                    )}
                                 </td>
 
 
                                 <td>
-                                    ${esc(x.description)}
+                                    ${esc(
+                                        x.description
+                                    )}
                                 </td>
 
 
                                 <td>
-                                    ${fmt(x.amount)}
+                                    ${fmt(
+                                        x.amount
+                                    )}
                                 </td>
 
 
                                 <td>
 
                                     <select
-                                        onchange="cat(${x.id}, this.value)"
+                                        onchange="cat(
+                                            ${x.id},
+                                            this.value
+                                        )"
                                     >
 
                                         ${
@@ -419,17 +692,30 @@ async function loadTx() {
                                                 "Payroll",
                                                 "Operating Expenses"
                                             ]
-                                            .map(c => `
-                                                <option
-                                                    ${
-                                                        c === x.category
-                                                            ? "selected"
-                                                            : ""
-                                                    }
-                                                >
-                                                    ${c}
-                                                </option>
-                                            `)
+                                            .map(
+                                                category => `
+
+                                                    <option
+                                                        value="${esc(
+                                                            category
+                                                        )}"
+
+                                                        ${
+                                                            category ===
+                                                            x.category
+                                                                ? "selected"
+                                                                : ""
+                                                        }
+                                                    >
+
+                                                        ${esc(
+                                                            category
+                                                        )}
+
+                                                    </option>
+
+                                                `
+                                            )
                                             .join("")
                                         }
 
@@ -449,11 +735,15 @@ async function loadTx() {
                                 </td>
 
                             </tr>
+
                         `).join("")}
 
                     </table>
+
                 `
+
                 : "Upload data first.";
+
 
     } catch (error) {
 
@@ -462,7 +752,10 @@ async function loadTx() {
             error
         );
 
-        document.getElementById("tx").textContent =
+
+        document.getElementById(
+            "tx"
+        ).textContent =
             "Unable to load transactions.";
     }
 }
@@ -472,26 +765,34 @@ async function loadTx() {
 // CHANGE TRANSACTION CATEGORY
 // ============================================================
 
-async function cat(id, category) {
+async function cat(
+    id,
+    category
+) {
+
     try {
 
-        const r = await apiFetch(
-            `/api/transactions/${id}/category`,
-            {
-                method: "POST",
+        const r =
+            await apiFetch(
+                `/api/transactions/${id}/category`,
+                {
+                    method: "POST",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                body: JSON.stringify({
-                    category: category
-                })
-            }
-        );
+                    body: JSON.stringify({
+                        category:
+                            category
+                    })
+                }
+            );
 
 
-        const text = await r.text();
+        const text =
+            await r.text();
 
 
         if (!r.ok) {
@@ -506,6 +807,7 @@ async function cat(id, category) {
 
 
         await refresh();
+
 
     } catch (error) {
 
@@ -525,7 +827,9 @@ async function ask(q) {
 
     const question =
         q ||
-        document.getElementById("q").value;
+        document.getElementById(
+            "q"
+        ).value;
 
 
     if (!question) {
@@ -534,7 +838,9 @@ async function ask(q) {
 
 
     const answerBox =
-        document.getElementById("answer");
+        document.getElementById(
+            "answer"
+        );
 
 
     answerBox.textContent =
@@ -543,23 +849,27 @@ async function ask(q) {
 
     try {
 
-        const r = await apiFetch(
-            "/api/chat",
-            {
-                method: "POST",
+        const r =
+            await apiFetch(
+                "/api/chat",
+                {
+                    method: "POST",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                body: JSON.stringify({
-                    question: question
-                })
-            }
-        );
+                    body: JSON.stringify({
+                        question:
+                            question
+                    })
+                }
+            );
 
 
-        const text = await r.text();
+        const text =
+            await r.text();
 
 
         let d = null;
@@ -569,12 +879,20 @@ async function ask(q) {
 
             try {
 
-                d = JSON.parse(text);
+                d =
+                    JSON.parse(
+                        text
+                    );
 
             } catch (error) {
 
                 answerBox.textContent =
                     `AI request failed: HTTP ${r.status}`;
+
+                console.error(
+                    "Invalid AI response:",
+                    text
+                );
 
                 return;
             }
@@ -601,7 +919,10 @@ async function ask(q) {
 
 
         answerBox.textContent =
-            `${d.answer || ""}\n\nEvidence: ${d.evidence || ""}`;
+            `${d.answer || ""}\n\nEvidence: ${
+                d.evidence || ""
+            }`;
+
 
     } catch (error) {
 
@@ -609,6 +930,7 @@ async function ask(q) {
             "AI request error:",
             error
         );
+
 
         answerBox.textContent =
             `AI request failed: ${error.message}`;
@@ -622,7 +944,9 @@ async function ask(q) {
 
 function fmt(x) {
 
-    return Number(x || 0).toLocaleString(
+    return Number(
+        x || 0
+    ).toLocaleString(
         undefined,
         {
             maximumFractionDigits: 2
@@ -637,7 +961,9 @@ function fmt(x) {
 
 function esc(s) {
 
-    return String(s).replace(
+    return String(
+        s ?? ""
+    ).replace(
         /[&<>"']/g,
 
         m => ({
@@ -655,22 +981,31 @@ function esc(s) {
 // INITIAL LOAD
 // ============================================================
 
-window.addEventListener("load", async () => {
+window.addEventListener(
+    "load",
+    async () => {
 
-    // IMPORTANT:
-    // DO NOT RESET DATABASE HERE.
-    //
-    // The backend separates transactions using
-    // X-Finz-Session.
-    //
-    // Every browser gets its own session ID.
+        // IMPORTANT:
+        //
+        // DO NOT RESET THE DATABASE HERE.
+        //
+        // The session is handled by:
+        //
+        // X-Finz-Session
+        //
+        // and:
+        //
+        // ?session_id=
+        //
+        // Every browser context gets its own ID.
 
-    console.log(
-        "Finz session:",
-        getSessionId()
-    );
+
+        console.log(
+            "Finz session:",
+            getSessionId()
+        );
 
 
-    await refresh();
-
-});
+        await refresh();
+    }
+);

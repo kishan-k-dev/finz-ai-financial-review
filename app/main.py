@@ -30,10 +30,20 @@ app = FastAPI(title="Finz AI Financial Review MVP")
 @app.middleware("http")
 async def no_cache_middleware(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path == "/" or request.url.path.startswith("/api/"):
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0, private"
+    if (
+        request.url.path == "/"
+        or request.url.path.startswith("/api/")
+        or request.url.path.startswith("/static/")
+    ):
+        response.headers["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, max-age=0, private"
+        )
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+
+    # Helps verify that the current deployment is serving this backend.
+    response.headers["X-Finz-Session-Isolation"] = "v3"
+
     return response
 
 app.mount(
@@ -87,12 +97,37 @@ init_db()
 
 
 def get_session_id(request: Request):
-    # Primary session source: browser-generated header.
-    # Cookie remains as a fallback for older clients.
-    session_id = request.headers.get("X-Finz-Session")
+    # Primary session source: browser-generated session ID.
+    # Query parameter is intentional: it makes each browser session
+    # part of the API URL, preventing shared/proxy-cached responses.
+    session_id = request.query_params.get("session_id")
+
     if session_id:
         return session_id.strip()
 
+    # Header fallback for clients that do not use the query parameter.
+    session_id = request.headers.get("X-Finz-Session")
+
+    def get_session_id(request: Request):
+    # 1. URL session ID
+    session_id = request.query_params.get("session_id")
+
+    if session_id:
+        return session_id.strip()
+
+    # 2. Header session ID
+    session_id = request.headers.get("X-Finz-Session")
+
+    if session_id:
+        return session_id.strip()
+
+    # 3. Old cookie fallback
+    return request.cookies.get("finz_session")
+
+    if session_id:
+        return session_id.strip()
+
+    # Cookie fallback for older clients.
     return request.cookies.get("finz_session")
 
 
