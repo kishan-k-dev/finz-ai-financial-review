@@ -19,36 +19,42 @@
 // ============================================================
 
 
+// Generate or retrieve a unique session ID for this browser session
 function getSessionId() {
-    let id = localStorage.getItem("finz_session_id");
-
-    if (!id) {
-
-        if (
-            window.crypto &&
-            typeof crypto.randomUUID === "function"
-        ) {
-            id = crypto.randomUUID();
-
-        } else {
-            id =
-                "finz-" +
-                Date.now() +
-                "-" +
-                Math.random()
-                    .toString(36)
-                    .slice(2);
-        }
-
-        localStorage.setItem(
-            "finz_session_id",
-            id
-        );
+    let sessionId = localStorage.getItem('finz_session_id');
+    if (!sessionId) {
+        sessionId = 'sess_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+        localStorage.setItem('finz_session_id', sessionId);
     }
-
-    return id;
+    return sessionId;
 }
 
+// When uploading a file, include the sessionId in headers or form data
+async function uploadFile(file) {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch("/upload", {
+        method: "POST",
+        headers: {
+            "X-Session-ID": getSessionId() // Send session ID to backend
+        },
+        body: formData
+    });
+    const result = await response.json();
+    renderOutput(result);
+}
+
+// When fetching data, include the sessionId
+async function fetchData() {
+    const response = await fetch(`/get-data`, {
+        headers: {
+            "X-Session-ID": getSessionId()
+        }
+    });
+    const data = await response.json();
+    // Render only this session's data
+}
 
 // ============================================================
 // API FETCH HELPER
