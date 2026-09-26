@@ -30,19 +30,36 @@ function getSessionId() {
 }
 
 // When uploading a file, include the sessionId in headers or form data
-async function uploadFile(file) {
-    const formData = new FormData();
-    formData.append("file", file);
-
-    const response = await fetch("/upload", {
-        method: "POST",
-        headers: {
-            "X-Session-ID": getSessionId() // Send session ID to backend
-        },
-        body: formData
-    });
-    const result = await response.json();
-    renderOutput(result);
+async function uploadFile(fileObject) {
+    // 1. Get the session ID from localStorage
+    let sessionId = localStorage.getItem("finz_session");
+    
+    // 2. Read file as base64 or FormData (depending on your backend setup)
+    let reader = new FileReader();
+    reader.readAsDataURL(fileObject);
+    reader.onload = async function () {
+        let base64Data = reader.result.split(',')[1];
+        
+        // 3. Send to backend WITH the session header explicitly attached
+        let response = await fetch('/api/upload-json', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Finz-Session': sessionId  // <-- THIS IS CRITICAL
+            },
+            body: JSON.stringify({
+                filename: fileObject.name,
+                data: base64Data
+            })
+        });
+        
+        let result = await response.json();
+        if (response.ok) {
+            alert("Upload successful!");
+        } else {
+            alert("Upload failed: " + result.detail);
+        }
+    };
 }
 
 // When fetching data, include the sessionId

@@ -108,14 +108,17 @@ init_db()
 # ============================================================
 
 def get_session_id(request: Request):
+    # Checks query parameter first
     session_id = request.query_params.get("session_id")
     if session_id and session_id.strip():
         return session_id.strip()
 
+    # Checks X-Finz-Session header next
     session_id = request.headers.get("X-Finz-Session")
     if session_id and session_id.strip():
         return session_id.strip()
 
+    # Checks cookies last
     session_id = request.cookies.get("finz_session")
     if session_id and session_id.strip():
         return session_id.strip()
